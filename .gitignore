@@ -1,0 +1,4 @@
+.venv/
+projects/
+remotion-composer/
+.env
