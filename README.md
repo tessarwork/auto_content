@@ -1,297 +1,331 @@
-# 🎬 Auto Content Generator: Automated 9:16 Short-Form Video Pipeline
+# 🎬 Auto Content Pipeline: Automated 9:16 Video Production API
 
-Pipeline otomatisasi produksi video pendek format vertikal (9:16) untuk **TikTok**, **Instagram Reels**, dan **YouTube Shorts**. Sistem ini menggabungkan kecerdasan buatan Google Gemini, kurasi aset visual Pixabay HD, sintesis suara multi-engine (Gemini TTS + Auto-Fallback Edge-TTS), dan perakitan video berbasis kode menggunakan **Remotion**.
+An autonomous, production-grade video generation service tailored for **TikTok**, **Instagram Reels**, and **YouTube Shorts**. 
 
----
-
-## 🌟 Fitur Utama
-
-- **🧠 AI Scriptwriter & Director (Google Gemini 3.5 Flash Lite)**
-  Membuat naskah video 5 adegan yang terstruktur, hook yang menarik, hook visual, statistik, perbandingan, diagram, serta prompt pencarian visual yang relevan.
-- **🛡️ Real Google Server Health Check (Anti-Hardcode)**
-  Memeriksa kesehatan model secara langsung ke server Google (mengambil metadata resmi, display name, dan token limit). Jika server Google tidak merespons dalam 8 detik, sistem langsung melakukan auto-cut atau beralih ke jalur fallback tanpa membuat proses macet (*bengong*).
-- **🎙️ Dual-Engine Voiceover dengan Non-Blocking Auto-Fallback**
-  - **Primer:** Google Gemini Interactions TTS (`gemini-3.8-flash-tts`) dengan pilihan suara natural (*Kore, Puck, Fenrir, dll.*).
-  - **Sekunder (Fallback):** Microsoft Edge-TTS (`id-ID-GadisNeural`) yang dikonversi otomatis ke WAV 44.1kHz mono. Berjalan seketika jika kuota Google habis atau koneksi TTS Google macet > 8 detik.
-- **🖼️ Smart Visual Engine (Pixabay HD 9:16 + Diagram Fallback)**
-  Mengambil stok foto atau ilustrasi vertikal beresolusi tinggi dari Pixabay API, kemudian melakukan auto center-crop dan resize presisi ke **1080x1920**. Jika kuota/stok kosong, sistem otomatis membuat diagram infografis modern via `DiagramGen`.
-- **⚡ Dynamic Word-Level Captions**
-  Subtitle kata demi kata yang disinkronkan secara matematis dengan durasi audio tiap scene, siap ditampilkan dengan animasi highlight pop-up di Remotion.
-- **🎥 Local Remotion Engine (No Timeout Limit)**
-  Perakitan video dilakukan secara lokal menggunakan Chromium headless dan FFmpeg, tanpa batasan timeout sehingga render video berkualitas tinggi tetap aman hingga selesai 100%.
-- **🤖 REST API Siap Integrasi n8n**
-  Menyediakan endpoint background worker asinkron (`/api/generate`, `/api/status/<job_id>`, `/api/download/<job_id>`) untuk automasi terjadwal via n8n, Make, atau webhook kustom.
+This system integrates **Google Gemini** for AI scriptwriting and directorship, a resilient **dual-engine voiceover pipeline** with zero-downtime fallback, automated **Pixabay HD visual curation**, and code-driven programmatic video rendering powered by **Remotion**.
 
 ---
 
-## 📐 Arsitektur Alur Kerja (Workflow)
+## 🏛️ System Architecture & Engineering Attribution
+
+This repository is architected with a clean separation between the **Application Orchestration Layer** and the **Foundational Media Toolset**:
+
+| Layer | Implementation | Description |
+| :--- | :--- | :--- |
+| **Application & Pipeline Controller** | [`app.py`](file:///Users/taufiq/workspace/auto_content/app.py) *(Custom Implementation)* | Core Flask REST API, asynchronous worker thread queue, Google Gemini health checks, resilient dual-engine TTS fallback, visual asset preprocessing (center-crop 1080x1920), word-level caption synchronization, and job lifecycle management. |
+| **Underlying Media Toolset & Engine** | `lib/`, `tools/`, `schemas/`, `styles/` | Integrated from the open-source **[OpenMontage](https://github.com/calesthio/openmontage)** framework (GNU AGPL-3.0), providing low-level media primitives, schema definitions, and Remotion composition bridges. |
+
+---
+
+## 🌟 Key Engineering Highlights
+
+- **🧠 Autonomous Scriptwriter & Director (Google Gemini 3.5 Flash Lite)**  
+  Generates structured 5-scene JSON plans featuring compelling narrative hooks, visual prompts, key statistics, comparisons, and scene timing.
+- **🛡️ Anti-Stall Health Checks & Timeout Protection**  
+  Uses non-blocking daemon threads (`run_with_timeout`) to guard against hung network sockets. Directly validates Google Gemini model metadata (`display_name`, token limits) with an 8-second circuit breaker before committing compute resources.
+- **🎙️ Dual-Engine Voiceover with Automatic Failover**  
+  - **Primary:** Google Gemini Interactions TTS (`gemini-3.8-flash-tts`) with natural human-like voice profiles (*Kore, Puck, Fenrir, Aoede, Charon*).
+  - **Secondary (Zero-Downtime Fallback):** Microsoft Edge-TTS (`id-ID-GadisNeural` or configured voice) converted automatically to uncompressed 44.1kHz mono WAV. Kicks in automatically if Google quota is exhausted (HTTP 429) or if synthesis stalls past 8 seconds.
+- **🖼️ Smart 9:16 Visual Pipeline with Fallback Infographics**  
+  Fetches high-resolution vertical imagery via the Pixabay API, automatically performing center-crop and resize to exact **1080x1920**. If imagery is unavailable or quota is exceeded, it falls back to dynamically rendered infographics via `DiagramGen`.
+- **⚡ Dynamic Word-Level Captions**  
+  Derives synchronized word-level timestamps directly from scene audio durations, styled for high-retention social media pop-up animations.
+- **🎥 Local Headless Remotion Render Engine**  
+  Renders final MP4 compositions locally using headless Chromium and FFmpeg with no arbitrary cloud timeouts.
+- **🤖 n8n & Webhook-Ready REST API**  
+  Exposes asynchronous background worker endpoints (`/api/generate`, `/api/status/<job_id>`, `/api/download/<job_id>`) designed for integration with automation platforms (n8n, Make, or custom webhooks).
+
+---
+
+## 📐 Pipeline Workflow
 
 ```mermaid
 flowchart TD
-    User([Trigger API / n8n]) -->|POST /api/generate| Flask[Flask API Server :5005]
-    Flask -->|Thread Asinkron| Worker[Pipeline Controller]
+    User([Client / n8n Automation]) -->|POST /api/generate| Flask[Flask API Server :5005]
+    Flask -->|Spawn Background Thread| Worker[Pipeline Controller app.py]
     
-    subgraph Tahap 1: Konsep & Naskah
-        Worker -->|Health Check| GemHealth{Gemini Server OK?}
-        GemHealth -->|Ya| GenScript[Gemini 3.5 Flash Lite]
-        GemHealth -->|Tidak| ErrCut[Auto Cut & Lapor Error]
+    subgraph Stage 1: Scriptwriting & Health Validation
+        Worker -->|8s Guard| GemHealth{Gemini Health Check OK?}
+        GemHealth -->|Healthy| GenScript[Gemini 3.5 Flash Lite]
+        GemHealth -->|Stalled / Rate-Limited| ErrCut[Circuit Breaker: Abort & Report]
         GenScript --> PlanJSON[(auto_plan.json)]
     end
 
-    subgraph Tahap 2: Aset Suara & Visual Paralel
-        PlanJSON --> TTSProbe{Gemini TTS OK?}
-        TTSProbe -->|Sehat| VoiceGemini[Gemini Flash TTS]
-        TTSProbe -->|Macet > 8s / Limit| VoiceEdge[Microsoft Edge-TTS GadisNeural]
-        VoiceGemini --> MixedAudio[Audio Master + BGM FFmpeg]
+    subgraph Stage 2: Parallel Audio & Visual Asset Generation
+        PlanJSON --> TTSProbe{Gemini TTS Responsive?}
+        TTSProbe -->|Pass| VoiceGemini[Gemini Flash TTS]
+        TTSProbe -->|Timeout >8s or 429| VoiceEdge[Microsoft Edge-TTS Fallback]
+        VoiceGemini --> MixedAudio[Master Audio + BGM FFmpeg Mix]
         VoiceEdge --> MixedAudio
         
-        PlanJSON --> PixabayFetch[Pixabay API Vertikal HD]
-        PixabayFetch -->|Crop 1080x1920| Visuals[(scene-*.png)]
-        PixabayFetch -.->|Fallback jika kosong| DiagramGen[DiagramGen Lokal]
+        PlanJSON --> PixabayFetch[Pixabay 9:16 HD Fetch]
+        PixabayFetch -->|Auto Center-Crop 1080x1920| Visuals[(scene-*.png)]
+        PixabayFetch -.->|Fallback if empty| DiagramGen[DiagramGen Local Engine]
         DiagramGen -.-> Visuals
     end
 
-    subgraph Tahap 3: Timeline & Subtitle
+    subgraph Stage 3: Timeline & Subtitle Composition
         MixedAudio & Visuals --> EditDecisions[edit_decisions.json + Word Captions]
     end
 
-    subgraph Tahap 4: Render Video Lokal
-        EditDecisions --> Remotion[Remotion Composer : React + Chromium]
+    subgraph Stage 4: Headless Video Rendering
+        EditDecisions --> Remotion[Remotion Composer: React + Chromium]
         Remotion --> FinalMP4[(final.mp4 1080x1920)]
     end
 
-    FinalMP4 --> Ready([GET /api/download/<job_id>])
+    FinalMP4 --> Ready([GET /api/download/:job_id])
 ```
 
 ---
 
-## 📂 Struktur Direktori
+## 📂 Project Structure
 
 ```text
 auto_content/
-├── app.py                      # Flask Server utama, health-check, worker, dan API routes
-├── .env                        # Konfigurasi API keys (Gemini, Pixabay)
-├── requirements.txt            # Daftar dependensi Python
-├── lib/                        # Pustaka utilitas pembantu
-├── projects/                   # Direktori output proyek (audio, gambar, naskah, render)
-│   └── <project-slug-id>/
-│       ├── assets/             # Audio wav, BGM mp3, gambar visual 9:16
-│       ├── artifacts/          # auto_plan.json
-│       └── renders/            # final.mp4
-├── remotion-composer/          # Engine perakitan video berbasis React & Remotion
+├── app.py                      # Core Flask API, health-checks, worker queue & pipeline logic
+├── .env.example                # Template for environment configuration
+├── requirements.txt            # Python dependencies (OpenMontage core + Flask service)
+├── render_demo.py              # Test harness for Remotion compositions
+│
+├── remotion-composer/          # Remotion React-based rendering engine (OpenMontage component)
 │   ├── package.json
-│   ├── src/                    # Template scene (stat_card, callout, comparison, hero)
-│   └── public/
-├── schemas/                    # JSON schema untuk validasi manifest dan edit decisions
-├── styles/                     # Template styling visual
-└── tools/                      # Tool adapter
-    ├── audio/                  # Adapter Gemini TTS
-    ├── graphics/               # Adapter Pixabay, Google Imagen, DiagramGen
-    └── video/                  # VideoCompose adapter penghubung Remotion
+│   ├── src/                    # Scene templates (callout, stat_card, comparison, hero)
+│   └── public/                 # Staged assets for Chromium renderer
+│
+├── tools/                      # Tool adapters (OpenMontage integration)
+│   ├── audio/                  # Gemini TTS, Edge-TTS, and audio mix wrappers
+│   ├── graphics/               # Pixabay, Google Imagen, and DiagramGen adapters
+│   └── video/                  # VideoCompose adapter bridging to Remotion
+├── lib/                        # OpenMontage utility libraries (caching, config, scoring)
+├── schemas/                    # JSON Schemas validating edit decisions and plans
+├── styles/                     # Visual presentation style presets
+└── projects/                   # Generated pipeline artifacts (audio, frames, final renders)
+    └── <job_id>/
+        ├── assets/             # Raw WAVs, BGM, cropped PNG scenes
+        ├── artifacts/          # auto_plan.json, edit_decisions.json
+        └── renders/            # final.mp4
 ```
 
 ---
 
-## 🛠️ Prasyarat Sistem
+## 🛠️ System Prerequisites
 
-Pastikan perangkat/server Anda telah terpasang:
-1. **Python 3.10+**
-2. **Node.js 18+ & npm** (diperlukan untuk menjalankan engine render Remotion)
-3. **FFmpeg & FFprobe** terinstal di sistem dan dapat diakses dari terminal:
+Ensure the host environment has the following installed:
+
+1. **Python 3.10+** — [python.org](https://www.python.org/)
+2. **Node.js 18+ & npm** — Required for running Remotion’s React-based video composer:
    ```bash
-   ffmpeg -version
-   ffprobe -version
+   node --version
+   npm --version
+   ```
+3. **FFmpeg & FFprobe** — Required for audio analysis, resampling, and final media encoding:
+   ```bash
+   # macOS (Homebrew)
+   brew install ffmpeg
+
+   # Linux (Ubuntu/Debian)
+   sudo apt update && sudo apt install -y ffmpeg
    ```
 
 ---
 
-## 🚀 Panduan Instalasi & Setup
+## 🚀 Installation & Setup Guide
 
-### 1. Masuk ke Direktori Proyek
-```bash
-cd /home/tessar/workspace/ai_workflow/auto_content
-```
+### 1. Clone & Set Up Python Virtual Environment
 
-### 2. Konfigurasi Virtual Environment Python
 ```bash
+git clone <your-repository-url>
+cd auto_content
+
+# Create and activate virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
+
+# Upgrade pip and install Python dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
 pip install flask edge-tts
 ```
 
-### 3. Konfigurasi Node Dependencies (Remotion)
+### 2. Configure the OpenMontage Remotion Engine
+
+OpenMontage uses **Remotion** as its React-based video composition engine.
+
+1. Ensure the `remotion-composer/` directory exists. If setting up in a fresh clone where `remotion-composer` was excluded:
+   ```bash
+   # Clone the composer templates from OpenMontage if needed
+   git clone https://github.com/calesthio/OpenMontage.git /tmp/openmontage
+   cp -r /tmp/openmontage/remotion-composer ./remotion-composer
+   rm -rf /tmp/openmontage
+   ```
+
+2. Install the Node.js dependencies:
+   ```bash
+   cd remotion-composer
+   npm install
+   cd ..
+   ```
+
+### 3. Configure Environment Variables (`.env`)
+
+Copy the provided environment template:
 ```bash
-cd remotion-composer
-npm install
-cd ..
+cp .env.example .env
 ```
 
-### 4. Setup Environment Variables (`.env`)
-Buat atau edit file `.env` di root direktori `auto_content`:
+Edit `.env` with your API credentials:
 ```env
-# Google Gemini API Key (dari Google AI Studio)
+# Google Gemini API Key (obtain from https://aistudio.google.com/)
 GEMINI_API_KEY=AIzaSy...
 
-# Pixabay API Key (gratis untuk stok foto & vektor HD)
+# Pixabay API Key (free for HD stock images from https://pixabay.com/api/docs/)
 PIXABAY_API_KEY=your_pixabay_api_key_here
 ```
 
 ---
 
-## 🏃 Cara Menjalankan Server
+## 🏃 Running the Service
 
-Jalankan server Flask menggunakan Python dari virtual environment:
-
+### Development Mode
 ```bash
-# Menjalankan di foreground
 ./.venv/bin/python app.py
 ```
-
-Server akan aktif di:
+The server will initialize on:
 ```text
-🚀 OpenMontage Gemini Automation API berjalan di http://127.0.0.1:5005
+🚀 OpenMontage Gemini Automation API running on http://127.0.0.1:5005
 ```
 
-> **Tips Production / Background:**  
-> Untuk menjalankan di background secara persisten:
-> ```bash
-> nohup ./.venv/bin/python app.py > server.log 2>&1 &
-> ```
+### Background Daemon (Production)
+To run the server in the background persistently:
+```bash
+nohup ./.venv/bin/python app.py > server.log 2>&1 &
+```
 
 ---
 
-## 📡 Dokumentasi Endpoint REST API
+## 📡 REST API Reference
 
-### 1. Buat Video Baru (`POST /api/generate`)
-Menginisiasi antrean produksi video di background.
+### 1. Enqueue Video Generation (`POST /api/generate`)
+Dispatches a new generation job to the asynchronous worker thread.
 
-- **URL:** `http://127.0.0.1:5005/api/generate`
-- **Method:** `POST`
-- **Header:** `Content-Type: application/json`
-- **Body:**
+- **Endpoint:** `POST /api/generate`
+- **Headers:** `Content-Type: application/json`
+- **Request Body:**
   ```json
   {
-    "topic": "Bahaya kecanduan doom scrolling bagi otak anak muda",
+    "topic": "The hidden dangers of algorithmic doom scrolling on the adolescent brain",
     "voice_id": "Kore"
   }
   ```
-  *(Opsi `voice_id` untuk Gemini TTS: `Kore`, `Puck`, `Fenrir`, `Aoede`, `Charon`)*
+  *Supported `voice_id` options for Gemini TTS: `Kore`, `Puck`, `Fenrir`, `Aoede`, `Charon`.*
 
-- **Contoh Request (cURL):**
+- **cURL Example:**
   ```bash
   curl -X POST http://127.0.0.1:5005/api/generate \
     -H "Content-Type: application/json" \
-    -d '{"topic": "Bahaya kecanduan doom scrolling bagi otak anak muda"}'
+    -d '{"topic": "The hidden dangers of algorithmic doom scrolling on the adolescent brain", "voice_id": "Kore"}'
   ```
 
-- **Response (202 Accepted):**
+- **Response (`202 Accepted`):**
   ```json
   {
     "job_id": "4b68a8dc4e8f",
-    "message": "Produksi video dimulai di background",
+    "message": "Video production started in background",
     "status_url": "http://127.0.0.1:5005/api/status/4b68a8dc4e8f"
   }
   ```
 
 ---
 
-### 2. Cek Status Produksi (`GET /api/status/<job_id>`)
-Memantau kemajuan proses produksi video.
+### 2. Poll Job Status (`GET /api/status/<job_id>`)
+Tracks the real-time progress of an in-flight job.
 
-- **URL:** `http://127.0.0.1:5005/api/status/<job_id>`
-- **Method:** `GET`
+- **Endpoint:** `GET /api/status/<job_id>`
 
-- **Contoh Request (cURL):**
+- **cURL Example:**
   ```bash
   curl http://127.0.0.1:5005/api/status/4b68a8dc4e8f
   ```
 
-- **Response Saat Sedang Berjalan (`running`):**
+- **Response (`running`):**
   ```json
   {
     "job_id": "4b68a8dc4e8f",
     "status": "running",
-    "step": "4/4 - Merender video 9:16 di Remotion (~4-5 menit)...",
-    "topic": "Bahaya kecanduan doom scrolling bagi otak anak muda",
-    "created_at": "2026-10-25T13:00:00.000000+00:00"
+    "step": "4/4 - Rendering 9:16 video via Remotion (~3-4 min)...",
+    "topic": "The hidden dangers of algorithmic doom scrolling on the adolescent brain",
+    "created_at": "2026-11-04T12:00:00.000000+00:00"
   }
   ```
 
-- **Response Setelah Selesai (`completed`):**
+- **Response (`completed`):**
   ```json
   {
     "job_id": "4b68a8dc4e8f",
     "status": "completed",
-    "step": "Selesai!",
-    "project_id": "bahaya-kecanduan-doom-scrolling-4b68a8",
+    "step": "Finished!",
+    "project_id": "the-hidden-dangers-of-algorithmic-doom-scrolling-4b68a8",
     "visual_mode": "pixabay",
-    "title": "Stop Doom Scrolling Sekarang!",
-    "caption": "Otak kamu bisa rusak gara-gara scrolling tanpa henti. Simak penjelasannya!",
-    "hashtags": ["#faktaotak", "#mentalhealth", "#tipsfokus"],
-    "video_path": "/home/tessar/workspace/ai_workflow/auto_content/projects/bahaya-kecanduan-doom-scrolling-4b68a8/renders/final.mp4",
+    "title": "Stop Doom Scrolling Now!",
+    "caption": "How non-stop algorithmic feeds affect cognitive focus.",
+    "hashtags": ["#BrainHealth", "#MentalFocus", "#TechDetox"],
+    "video_path": "/path/to/projects/the-hidden-dangers-of-algorithmic-doom-scrolling-4b68a8/renders/final.mp4",
     "download_url": "http://127.0.0.1:5005/api/download/4b68a8dc4e8f",
-    "completed_at": "2026-10-25T13:04:30.000000+00:00"
+    "completed_at": "2026-11-04T12:04:15.000000+00:00"
   }
   ```
 
 ---
 
-### 3. Unduh Video Hasil Render (`GET /api/download/<job_id>`)
-Mengunduh file video MP4 (1080x1920) jika status sudah `completed`.
+### 3. Download Rendered Video (`GET /api/download/<job_id>`)
+Downloads the final rendered vertical MP4 video once status reaches `completed`.
 
-- **URL:** `http://127.0.0.1:5005/api/download/<job_id>`
-- **Method:** `GET`
+- **Endpoint:** `GET /api/download/<job_id>`
 
-- **Contoh Download via Terminal:**
+- **cURL Example:**
   ```bash
   curl -O -J http://127.0.0.1:5005/api/download/4b68a8dc4e8f
   ```
 
 ---
 
-## 🔗 Integrasi Automasi dengan n8n
+## 🔗 Automation Integration (n8n / Webhooks)
 
-Pipeline ini dirancang untuk diintegrasikan dengan workflow n8n secara mulus:
+This API is designed to slot into asynchronous orchestrators like **n8n** or **Make**:
 
 ```text
-[Schedule / Webhook Trigger]
+[Cron / Schedule Trigger]
             │
             ▼
 [HTTP Request Node: POST /api/generate]
-            │ (dapatkan job_id)
+            │ (Extracts job_id)
             ▼
-┌─────► [Wait Node: 30 detik]
+┌─────► [Wait Node: 30 seconds]
 │           │
 │           ▼
 │       [HTTP Request Node: GET /api/status/{{ $json.job_id }}]
 │           │
 └────── [If Node: status != "completed"?]
-            │ (Jika completed)
+            │ (When completed)
             ▼
 [HTTP Request Node: GET /api/download/{{ $json.job_id }}]
-            │ (Binary File MP4)
+            │ (Binary Video Stream)
             ▼
-[Upload ke TikTok / Instagram Reels / YouTube Shorts Node]
+[Social Publisher Node: YouTube Shorts / TikTok / Instagram Reels]
 ```
 
 ---
 
-## ⚙️ Detail Mekanisme Kesehatan & Fallback
+## 🛡️ Reliability & Fault-Tolerance Mechanisms
 
-1. **Non-Blocking Daemon Thread Timeout (`run_with_timeout`)**:
-   Berbeda dengan `ThreadPoolExecutor` bawaan yang sering macet pada operasi I/O socket hang, fungsi ini menggunakan `threading.Thread(daemon=True)` dengan `queue.Queue()`. Jika waktu melebihi batas (misal 8 atau 15 detik), thread langsung ditinggalkan tanpa memblokir thread utama.
-2. **Health Check Google Model**:
-   Sebelum memanggil naskah, sistem mengirim `client.models.get(model=...)`. Dari situ diperiksa nilai `name`, `display_name`, dan batas token. Tidak ada status yang di-hardcode.
-3. **Penyelamat Edge-TTS**:
-   Jika Google TTS mengembalikan HTTP 429 (Resource Exhausted) atau socket hanging, sistem otomatis beralih ke engine `edge-tts` lokal dengan suara wanita Indonesia alami (`id-ID-GadisNeural`) dan mengonversi format ke WAV standar industri. Produksi video tidak pernah gagal karena masalah kuota TTS.
-4. **Remotion Local Render**:
-   Rendering video menggunakan GPU/CPU lokal melalui Chromium headless. Timeout pada tahap ini ditiadakan agar video berdurasi panjang tetap selesai dengan sempurna.
+1. **Non-Blocking Daemon Worker (`run_with_timeout`)**: Standard Python thread pools can hang indefinitely when underlying HTTP sockets stall during streaming API requests. This service uses standalone daemon threads with `queue.Queue` timeouts: if an upstream provider stalls beyond the deadline, execution unblocks immediately.
+2. **Live Gemini Health Checks**: Rather than trusting hardcoded model endpoints, the pipeline queries Google's metadata catalog (`client.models.get`) prior to script generation to verify availability and token quota.
+3. **Automated Edge-TTS Fallback**: If Gemini TTS encounters quota exhaustion (HTTP 429) or latency spikes (> 8 seconds), the pipeline instantly routes synthesis to local Microsoft Edge-TTS without failing the job.
+4. **Resilient Visual Engine**: Missing Pixabay stock results are seamlessly substituted with auto-generated infographic cards via `DiagramGen`, ensuring no render is ever aborted due to missing visual assets.
 
 ---
 
-## 📄 Lisensi & Kontributor
+## 📄 License & Acknowledgements
 
-Dikembangkan untuk kebutuhan produksi konten otomatis di ekosistem **OpenMontage** / **AI Workflow**.
-Semua komponen kode, adapter, dan template scene bebas dimodifikasi sesuai kebutuhan spesifik saluran konten Anda.
+- **Application & Service Code:** Custom pipeline controller, API routes, and fallback logic authored by the repository maintainer.
+- **Foundational Video Engine:** Integrates components from **[OpenMontage](https://github.com/calesthio/openmontage)**, licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
